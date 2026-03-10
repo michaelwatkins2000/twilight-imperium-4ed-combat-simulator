@@ -141,10 +141,11 @@ def simulate_space_combat(
     Simulate a single space combat to conclusion (no retreats).
 
     Pre-combat sequence (each fires once, before round 1):
-      1. Anti-Fighter Barrage — both sides' Destroyers fire simultaneously;
-         hits assigned to Fighters only, cannot be sustained.
-      2. Space Cannon Offence — both sides' PDS fire simultaneously;
+      1. Space Cannon Offence — both sides' PDS fire simultaneously;
          hits assigned to any ship using normal assign_hits rules.
+         Fighters can soak hits here before AFB fires.
+      2. Anti-Fighter Barrage — both sides' Destroyers fire simultaneously;
+         hits assigned to Fighters only, cannot be sustained.
 
     Then main combat rounds until one side is eliminated.
     """
@@ -154,20 +155,20 @@ def simulate_space_combat(
     attackers = [copy.copy(u) for u in att_ships]
     defenders = [copy.copy(u) for u in def_ships]
 
-    # Step 1: Anti-Fighter Barrage (simultaneous)
-    att_afb = sum(roll_ability(u.effective_afb) for u in attackers if u.effective_afb)
-    def_afb = sum(roll_ability(u.effective_afb) for u in defenders if u.effective_afb)
-    attackers = assign_hits_to_fighters(attackers, def_afb)
-    defenders = assign_hits_to_fighters(defenders, att_afb)
-
-    if not attackers or not defenders:
-        return _determine_result(attackers, defenders)
-
-    # Step 2: Space Cannon Offence (simultaneous, hits any ship)
+    # Step 1: Space Cannon Offence (simultaneous, hits any ship including fighters)
     att_sc = sum(roll_ability(u.effective_space_cannon) for u in att_pds if u.effective_space_cannon)
     def_sc = sum(roll_ability(u.effective_space_cannon) for u in def_pds if u.effective_space_cannon)
     attackers = assign_hits(attackers, def_sc)
     defenders = assign_hits(defenders, att_sc)
+
+    if not attackers or not defenders:
+        return _determine_result(attackers, defenders)
+
+    # Step 2: Anti-Fighter Barrage (simultaneous, hits Fighters only)
+    att_afb = sum(roll_ability(u.effective_afb) for u in attackers if u.effective_afb)
+    def_afb = sum(roll_ability(u.effective_afb) for u in defenders if u.effective_afb)
+    attackers = assign_hits_to_fighters(attackers, def_afb)
+    defenders = assign_hits_to_fighters(defenders, att_afb)
 
     if not attackers or not defenders:
         return _determine_result(attackers, defenders)

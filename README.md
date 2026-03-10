@@ -134,9 +134,11 @@ Unit names are **case-insensitive** and accept spaces, underscores, or no separa
 ## Combat Sequence
 
 ### Space Combat
-1. **Anti-Fighter Barrage** — both sides' Destroyers fire simultaneously; hits assigned to Fighters only (cannot be sustained)
-2. **Space Cannon Offence** — both sides' PDS fire simultaneously; hits assigned to any ship
+1. **Space Cannon Offence** — both sides' PDS fire simultaneously; hits assigned to any ship (including Fighters)
+2. **Anti-Fighter Barrage** — both sides' Destroyers fire simultaneously; hits assigned to Fighters only (cannot be sustained)
 3. **Main combat rounds** — both sides roll simultaneously until one side is eliminated
+
+> Fighters can absorb Space Cannon hits before AFB fires, so the order matters.
 
 ### Ground Combat
 1. **Bombardment** — attacker's ships bombard defender's ground forces *(skipped if defender has PDS — Planetary Shield)*
