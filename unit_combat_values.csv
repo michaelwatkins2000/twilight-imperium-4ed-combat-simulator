@@ -1,0 +1,9 @@
+Unit Name,Combat Value,Upgraded Combat Value,Sustain Damage,Anti Fighter Barrage,Upgraded Anti Fighter Barrage,Bombardment,Upgraded Bombardment,Space Cannon,Upgraded Space Cannon,Type of Unit
+Dreadnought,(5;1),(5;1),Yes,,,(5;1),(5;1),,,Ship
+Cruiser,(7;1),(6;1),No,,,,,,,Ship
+Destroyer,(9;1),(8;1),No,(9;2),(6;3),,,,,Ship
+Carrier,(9;1),(9;1),No,,,,,,,Ship
+Fighter,(9;1),(8;1),No,,,,,,,Ship
+War Sun,(3;3),,Yes,,,(3;3),,,,Ship
+Infantry,(8;1),(7;1),No,,,,,,,Ground Force
+PDS,,,,,,,,(6;1),(5;1),Structure
