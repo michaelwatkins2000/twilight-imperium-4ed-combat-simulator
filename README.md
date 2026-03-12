@@ -10,7 +10,7 @@ A Monte Carlo combat probability calculator for **Twilight Imperium 4th Edition*
 |-------|-------|--------|
 | 1 | Core space & ground combat | ✅ Complete |
 | 2 | Pre-combat steps (AFB, Space Cannon, Bombardment) | ✅ Complete |
-| 3 | Generic technologies | 🔜 Planned |
+| 3 | Generic technologies | ✅ Complete |
 | 4 | Faction units, flagships, mechs & abilities | 🔜 Planned |
 | 5 | Web UI | 🔜 Planned |
 
@@ -77,6 +77,21 @@ python main.py -c ground \
 
 # Custom simulation count
 python main.py -c space -a "War_Sun:1" -d "Cruiser:3" -n 50000
+
+# Space combat with technologies
+python main.py -c space \
+    -a "Destroyer:3 Cruiser:2" \
+    -d "Cruiser:2 Fighter:2" \
+    --att-tech "plasma assault" \
+    --def-tech "antimass duranium"
+
+# Ground combat with attacker X-89 and defender Magen
+python main.py -c ground \
+    -a "Infantry:4" \
+    -d "Infantry:3" \
+    --att-ships "Dreadnought:1" \
+    --att-tech "x89" \
+    --def-tech "magen"
 ```
 
 ### Fleet format
@@ -100,6 +115,8 @@ Unit names are **case-insensitive** and accept spaces, underscores, or no separa
 | `--att-pds` | | Attacker PDS — Space Cannon Offence (space only) |
 | `--def-pds` | | Defender PDS — Space Cannon Offence (space) or Space Cannon Defence + Planetary Shield (ground) |
 | `--att-ships` | | Attacker ships in orbit for Bombardment (ground only) |
+| `--att-tech` | | Attacker's technologies (space-separated aliases) |
+| `--def-tech` | | Defender's technologies (space-separated aliases) |
 | `--simulations` | `-n` | Number of simulations (default: 10,000) |
 
 ---
@@ -131,6 +148,22 @@ Unit names are **case-insensitive** and accept spaces, underscores, or no separa
 
 ---
 
+## Technologies (Phase 3)
+
+Pass technology names via `--att-tech` / `--def-tech` as a space-separated string. Short aliases or full names are both accepted (case-insensitive).
+
+| Alias | Full Name | Effect |
+|-------|-----------|--------|
+| `x89` | x89_bacterial_weapon | Ground: double all hits (combat + bombardment) on defending ground forces |
+| `antimass` | antimass_deflectors | Space Cannon: subtract 1 from each incoming SC die roll (offence and defence) |
+| `graviton` | graviton_laser_system | Space SC Offence: own SC hits must target non-Fighter ships; excess hits wasted |
+| `plasma` | plasma_scoring | SC + Bombardment: +1 extra die rolled at the best (lowest) combat value |
+| `magen` | magen_defence_grid | Ground: after Space Cannon Defence, defender scores 1 free hit on attacker's ground forces |
+| `duranium` | duranium_armour | All: at end of each round, repair 1 damaged unit that did not sustain this round |
+| `assault` | assault_cannon | Space: after SC + AFB, if owner has ≥3 non-Fighter ships, destroy cheapest enemy non-Fighter |
+
+---
+
 ## Combat Sequence
 
 ### Space Combat
@@ -154,6 +187,7 @@ Unit names are **case-insensitive** and accept spaces, underscores, or no separa
 ```
 ├── unit_combat_values.csv   # Unit stats (source of truth)
 ├── units.py                 # UnitType & Ability dataclasses, CSV loader
+├── technologies.py          # Technologies dataclass and parser
 ├── combat.py                # Combat simulation logic
 ├── simulator.py             # Monte Carlo runner
 ├── main.py                  # CLI (Typer)

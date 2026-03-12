@@ -32,6 +32,7 @@ import typer
 from units import UnitType, Ability, load_unit_types, build_lookup, _normalize
 from combat import Unit
 from simulator import run_simulation
+from technologies import Technologies
 
 app = typer.Typer(add_completion=False)
 
@@ -185,6 +186,34 @@ def _unit_row(ut: UnitType) -> str:
     return f"{base}  →  upgrade: {upgrade_str}"
 
 
+TECH_DISPLAY = {
+    'x89_bacterial_weapon':  ('x89',     'Ground: double all hits on defending ground forces'),
+    'antimass_deflectors':   ('antimass','Space Cannon: -1 to each incoming SC die roll'),
+    'graviton_laser_system': ('graviton','Space SC Offence: own hits must target non-Fighters'),
+    'plasma_scoring':        ('plasma',  'SC + Bombardment: +1 extra die at best combat value'),
+    'magen_defence_grid':    ('magen',   'Ground: 1 free hit on attacker after SC Defence'),
+    'duranium_armour':       ('duranium','All: repair 1 damaged unit/round (not sustained this round)'),
+    'assault_cannon':        ('assault', 'Space: destroy cheapest enemy non-Fighter if ≥3 own non-Fighters'),
+}
+
+
+def show_tech_table() -> None:
+    typer.echo("\nAvailable technologies (space-separated, use short alias or full name):")
+    alias_w = max(len(v[0]) for v in TECH_DISPLAY.values())
+    for field_name, (alias, desc) in TECH_DISPLAY.items():
+        typer.echo(f"  {alias:{alias_w}}  ({field_name})  —  {desc}")
+    typer.echo()
+
+
+def parse_technologies(raw: Optional[str], label: str) -> Optional[Technologies]:
+    """Parse a technology string; returns None and prints an error on failure."""
+    try:
+        return Technologies.parse(raw)
+    except ValueError as exc:
+        typer.echo(f"  [{label}] {exc}", err=True)
+        return None
+
+
 def show_unit_table(units: dict[str, UnitType], header: str) -> None:
     typer.echo(f"\n{header}:")
     width = max(len(n) for n in units)
@@ -232,6 +261,14 @@ def main(
     att_ships: Annotated[Optional[str], typer.Option(
         '--att-ships',
         help="Attacker's ships in orbit for Bombardment (ground combat only).",
+    )] = None,
+    att_tech: Annotated[Optional[str], typer.Option(
+        '--att-tech',
+        help="Attacker's technologies (space-separated, e.g. 'plasma assault').",
+    )] = None,
+    def_tech: Annotated[Optional[str], typer.Option(
+        '--def-tech',
+        help="Defender's technologies (space-separated, e.g. 'antimass duranium').",
     )] = None,
     simulations: Annotated[int, typer.Option(
         '--simulations', '-n',
@@ -309,6 +346,36 @@ def main(
         if def_pds_units is None:
             raise typer.Exit(code=1)
 
+    # --- Technologies ---
+    if interactive:
+        show_tech_table()
+
+    if att_tech is None:
+        if interactive:
+            raw_at = typer.prompt("Attacker technologies (press Enter to skip)", default="")
+            att_tech_obj = parse_technologies(raw_at or None, "Attacker tech")
+            if att_tech_obj is None:
+                raise typer.Exit(code=1)
+        else:
+            att_tech_obj = Technologies()
+    else:
+        att_tech_obj = parse_technologies(att_tech, "Attacker tech")
+        if att_tech_obj is None:
+            raise typer.Exit(code=1)
+
+    if def_tech is None:
+        if interactive:
+            raw_dt = typer.prompt("Defender technologies (press Enter to skip)", default="")
+            def_tech_obj = parse_technologies(raw_dt or None, "Defender tech")
+            if def_tech_obj is None:
+                raise typer.Exit(code=1)
+        else:
+            def_tech_obj = Technologies()
+    else:
+        def_tech_obj = parse_technologies(def_tech, "Defender tech")
+        if def_tech_obj is None:
+            raise typer.Exit(code=1)
+
     # --- Attacker ships in orbit (ground combat only) ---
     att_ship_units: list[Unit] = []
     if combat_type == 'ground':
@@ -331,9 +398,13 @@ def main(
         typer.echo(f"  Attacker PDS    : {fleet_summary(att_pds_units)}")
     if att_ship_units:
         typer.echo(f"  Attacker ships  : {fleet_summary(att_ship_units)}")
+    if att_tech_obj.active_names():
+        typer.echo(f"  Attacker techs  : {', '.join(att_tech_obj.active_names())}")
     typer.echo(f"  Defender        : {fleet_summary(defender_units)}")
     if def_pds_units:
         typer.echo(f"  Defender PDS    : {fleet_summary(def_pds_units)}")
+    if def_tech_obj.active_names():
+        typer.echo(f"  Defender techs  : {', '.join(def_tech_obj.active_names())}")
 
     results = run_simulation(
         combat_type,
@@ -342,6 +413,8 @@ def main(
         att_pds=att_pds_units,
         att_ships=att_ship_units,
         def_pds=def_pds_units,
+        att_techs=att_tech_obj,
+        def_techs=def_tech_obj,
         n_simulations=simulations,
     )
 
