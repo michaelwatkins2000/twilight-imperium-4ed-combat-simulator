@@ -426,7 +426,8 @@ def simulate_ground_combat(
       3. Magen Defence Grid — if defender has this tech, score 1 free hit
          against attacker's ground forces (after SC Defence).
       4. Main combat rounds:
-         X-89: double all combat hits against defending ground forces.
+         X-89 (attacker): double all hits against defending ground forces.
+         X-89 (defender): double all hits against attacking ground forces.
          Duranium Armour: repair 1 unit/round (before win condition check).
     """
     att_ships = att_ships or []
@@ -471,9 +472,11 @@ def simulate_ground_combat(
         att_hits = sum(u.roll_combat() for u in attackers)
         def_hits = sum(u.roll_combat() for u in defenders)
 
-        # X-89 doubles hits on defending ground forces
+        # X-89 doubles all hits against defending ground forces
         if at.x89_bacterial_weapon:
             att_hits *= 2
+        if dt.x89_bacterial_weapon:
+            def_hits *= 2
 
         attackers = assign_hits(attackers, def_hits)
         defenders = assign_hits(defenders, att_hits)

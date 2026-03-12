@@ -49,8 +49,9 @@ class Technologies:
     """
     Boolean flags for each generic combat technology a faction may possess.
 
-    x89_bacterial_weapon  — Ground: double all hits on defending ground forces
-                            (combat hits AND bombardment hits)
+    x89_bacterial_weapon  — Ground: double all hits on enemy ground forces
+                            (attacker: bombardment + combat hits doubled;
+                             defender: combat hits doubled; no bombardment)
     antimass_deflectors   — Space Cannon: subtract 1 from each incoming SC die
                             (both SC Offence and SC Defence)
     graviton_laser_system — Space Cannon Offence: owner's SC hits must target
