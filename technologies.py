@@ -59,9 +59,9 @@ class Technologies:
                             excess hits are wasted
     plasma_scoring        — Space Cannon + Bombardment: +1 extra die rolled at
                             the best (lowest) combat value among the firing units
-    magen_defence_grid    — Ground: after Space Cannon Defence, defender scores
-                            1 free hit against attacker's ground forces;
-                            targets non-sustain units first
+    magen_defence_grid    — Ground: after Space Cannon Defence, if defender has
+                            a PDS structure, score 1 free hit against attacker's
+                            ground forces; targets non-sustain units first
     duranium_armour       — All combat: at the end of each round, repair one
                             damaged unit that did NOT sustain this round
                             (checked before win condition)

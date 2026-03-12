@@ -423,8 +423,8 @@ def simulate_ground_combat(
          Only fires if defender has PDS.
          Plasma Scoring: +1 extra SC die at best CV.
          Antimass: attacker's Antimass reduces incoming SC die rolls by 1.
-      3. Magen Defence Grid — if defender has this tech, score 1 free hit
-         against attacker's ground forces (after SC Defence).
+      3. Magen Defence Grid — if defender has this tech AND a PDS structure,
+         score 1 free hit against attacker's ground forces (after SC Defence).
       4. Main combat rounds:
          X-89 (attacker): double all hits against defending ground forces.
          X-89 (defender): double all hits against attacking ground forces.
@@ -458,8 +458,8 @@ def simulate_ground_combat(
         if not attackers:
             return _determine_result(attackers, defenders)
 
-    # --- Step 3: Magen Defence Grid ---
-    if dt.magen_defence_grid:
+    # --- Step 3: Magen Defence Grid (requires a PDS structure to be present) ---
+    if dt.magen_defence_grid and defender_has_pds:
         attackers = apply_magen(attackers)
         if not attackers:
             return _determine_result(attackers, defenders)
