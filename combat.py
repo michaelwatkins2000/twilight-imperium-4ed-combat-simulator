@@ -472,7 +472,7 @@ def simulate_ground_combat(
         att_hits = sum(u.roll_combat() for u in attackers)
         def_hits = sum(u.roll_combat() for u in defenders)
 
-        # X-89 doubles all hits against defending ground forces
+        # X-89 doubles all hits produced by ground forces
         if at.x89_bacterial_weapon:
             att_hits *= 2
         if dt.x89_bacterial_weapon:
