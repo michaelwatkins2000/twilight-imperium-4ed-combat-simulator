@@ -156,7 +156,7 @@ Pass technology names via `--att-tech` / `--def-tech` as a space-separated strin
 |-------|-----------|--------|
 | `x89` | x89_bacterial_weapon | Ground: double all hits on enemy ground forces (attacker: bombardment + combat hits doubled; defender: combat hits doubled) |
 | `antimass` | antimass_deflectors | Space Cannon: subtract 1 from each incoming SC die roll (offence and defence) |
-| `graviton` | graviton_laser_system | Space SC Offence: own SC hits must target non-Fighter ships; excess hits wasted |
+| `graviton` | graviton_laser_system | Space SC Offence: own SC hits must target non-Fighter ships first; excess hits spill onto Fighters |
 | `plasma` | plasma_scoring | SC + Bombardment: +1 extra die rolled at the best (lowest) combat value |
 | `magen` | magen_defence_grid | Ground: if defender has a PDS, score 1 free hit on attacker's ground forces after Space Cannon Defence |
 | `duranium` | duranium_armour | All: at end of each round, repair 1 damaged unit that did not sustain this round |

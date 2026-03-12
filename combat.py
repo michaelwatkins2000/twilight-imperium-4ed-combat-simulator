@@ -208,9 +208,9 @@ def assign_hits_to_fighters(units: list[Unit], hits: int) -> list[Unit]:
 def assign_hits_graviton(units: list[Unit], hits: int) -> list[Unit]:
     """
     Graviton Laser System hit assignment:
-    SC hits target non-Fighter ships first; excess hits after all non-Fighters
-    are gone are wasted (never spill onto Fighters).
-    If there are no non-Fighters at all, fall back to normal assignment.
+    SC hits must target non-Fighter ships first. Once all non-Fighters are
+    eliminated, any remaining hits spill over onto Fighters normally.
+    If there are no non-Fighters at all, hits are assigned normally.
     """
     if hits <= 0:
         return units
@@ -219,11 +219,16 @@ def assign_hits_graviton(units: list[Unit], hits: int) -> list[Unit]:
     fighters = [u for u in units if u.name == 'Fighter']
 
     if not non_fighters:
-        # No non-fighters — hits are wasted
-        return units
+        return assign_hits(fighters, hits)
 
-    surviving_non_fighters = assign_hits(non_fighters, hits)
-    return surviving_non_fighters + fighters
+    # Each non-fighter absorbs 1 hit to destroy; sustainers absorb 1 extra.
+    non_fighter_capacity = sum(2 if u.can_sustain else 1 for u in non_fighters)
+    hits_for_non_fighters = min(hits, non_fighter_capacity)
+    hits_for_fighters = hits - hits_for_non_fighters
+
+    surviving_non_fighters = assign_hits(non_fighters, hits_for_non_fighters)
+    surviving_fighters = assign_hits(fighters, hits_for_fighters)
+    return surviving_non_fighters + surviving_fighters
 
 
 # ---------------------------------------------------------------------------
@@ -349,7 +354,10 @@ def simulate_space_combat(
         defenders = assign_hits(defenders, att_sc)
 
     # defender's SC hits attackers (antimass reduces die rolls if attacker has it)
-    attackers = assign_hits(attackers, def_sc)
+    if dt.graviton_laser_system:
+        attackers = assign_hits_graviton(attackers, def_sc)
+    else:
+        attackers = assign_hits(attackers, def_sc)
 
     if not attackers or not defenders:
         return _determine_result(attackers, defenders)

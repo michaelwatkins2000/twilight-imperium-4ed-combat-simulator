@@ -55,8 +55,8 @@ class Technologies:
     antimass_deflectors   — Space Cannon: subtract 1 from each incoming SC die
                             (both SC Offence and SC Defence)
     graviton_laser_system — Space Cannon Offence: owner's SC hits must target
-                            non-Fighter ships; if no non-Fighters remain,
-                            excess hits are wasted
+                            non-Fighter ships first; excess hits spill onto
+                            Fighters once all non-Fighters are eliminated
     plasma_scoring        — Space Cannon + Bombardment: +1 extra die rolled at
                             the best (lowest) combat value among the firing units
     magen_defence_grid    — Ground: after Space Cannon Defence, if defender has
