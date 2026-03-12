@@ -344,7 +344,7 @@ def simulate_space_combat(
     # --- Step 1: Space Cannon Offence (simultaneous) ---
     # Attacker's SC hits defenders; defender's SC hits attackers.
     # antimass on each side applies to the incoming fire against that side.
-    att_sc = roll_sc_hits(att_pds, plasma_scoring=at.plasma_scoring)
+    att_sc = roll_sc_hits(att_pds, plasma_scoring=at.plasma_scoring, antimass=dt.antimass_deflectors)
     def_sc = roll_sc_hits(def_pds, plasma_scoring=dt.plasma_scoring, antimass=at.antimass_deflectors)
 
     # Apply Graviton for attacker's SC: must target non-Fighters in defenders
