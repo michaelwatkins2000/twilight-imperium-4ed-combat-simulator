@@ -323,8 +323,8 @@ def simulate_space_combat(
     Pre-combat sequence:
       1. Space Cannon Offence — both sides' PDS fire simultaneously;
          hits assigned to any ship (incl. Fighters).
-         Antimass: defender's SC hits against attacker reduced by 1/die.
-         Graviton: attacker's SC hits must target non-Fighters.
+         Antimass: each side's Antimass reduces incoming SC die rolls by 1.
+         Graviton: each side's SC hits must target non-Fighters first.
          Plasma Scoring: +1 extra die at best CV.
       2. Anti-Fighter Barrage — both sides' Destroyers fire simultaneously;
          hits assigned to Fighters only (no sustain).
@@ -353,7 +353,7 @@ def simulate_space_combat(
     else:
         defenders = assign_hits(defenders, att_sc)
 
-    # defender's SC hits attackers (antimass reduces die rolls if attacker has it)
+    # defender's SC hits attackers (attacker's Antimass reduces incoming die rolls)
     if dt.graviton_laser_system:
         attackers = assign_hits_graviton(attackers, def_sc)
     else:
