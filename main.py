@@ -1,5 +1,5 @@
 """
-Twilight Imperium 4E Combat Calculator — Phase 2
+Twilight Imperium 4E Combat Calculator — Phase 4
 
 All options are optional. If omitted, the tool will prompt interactively
 and display available units before asking for fleet input.
@@ -33,6 +33,7 @@ from units import UnitType, Ability, load_unit_types, build_lookup, _normalize
 from combat import Unit
 from simulator import run_simulation
 from technologies import Technologies
+from factions import FactionAbilities, get_faction, list_factions, get_all_factions, normalize_tech_alias
 
 app = typer.Typer(add_completion=False)
 
@@ -205,13 +206,73 @@ def show_tech_table() -> None:
     typer.echo()
 
 
-def parse_technologies(raw: Optional[str], label: str) -> Optional[Technologies]:
-    """Parse a technology string; returns None and prints an error on failure."""
+def parse_technologies(
+    raw: Optional[str],
+    label: str,
+    faction: Optional[FactionAbilities] = None,
+) -> Optional[Technologies]:
+    """
+    Parse a technology string into a Technologies instance.
+    Faction-tech tokens are activated on the faction object and consumed
+    before the remainder is forwarded to Technologies.parse().
+    Returns None and prints an error on failure.
+    """
+    if not raw or not raw.strip():
+        return Technologies()
+
+    generic_tokens: list[str] = []
+    for token in raw.strip().split():
+        norm = normalize_tech_alias(token)
+        if faction is not None and norm in faction.faction_tech_aliases:
+            faction.active_faction_techs.add(faction.faction_tech_aliases[norm])
+        else:
+            generic_tokens.append(token)
+
     try:
-        return Technologies.parse(raw)
+        return Technologies.parse(' '.join(generic_tokens) if generic_tokens else None)
     except ValueError as exc:
         typer.echo(f"  [{label}] {exc}", err=True)
         return None
+
+
+def parse_faction(raw: Optional[str], label: str) -> Optional[FactionAbilities]:
+    """
+    Look up a faction by name. Returns None (no faction) for blank input,
+    or prints an error and returns None sentinel on unknown name.
+    Use the returned value's truthiness carefully: a valid faction is always
+    truthy (it has a name); None means either 'not provided' or 'error'.
+    We distinguish by whether raw was provided.
+    """
+    if not raw or not raw.strip():
+        return None
+    faction = get_faction(raw.strip())
+    if faction is None:
+        available = ', '.join(list_factions()) or '(none registered yet)'
+        typer.echo(
+            f"  [{label}] Unknown faction '{raw}'. Available: {available}",
+            err=True,
+        )
+    return faction  # None on unknown, FactionAbilities on success
+
+
+def inject_faction_units(
+    lookup: dict[str, UnitType],
+    faction: FactionAbilities,
+) -> None:
+    """
+    Mutate a fleet lookup in-place to add faction-specific units:
+    - 'flagship' → faction's flagship UnitType
+    - 'mech'     → faction's mech UnitType
+    - Any unit_overrides replace the corresponding base-unit entry.
+    """
+    if faction.flagship is not None:
+        lookup[_normalize('Flagship')] = faction.flagship
+    if faction.mech is not None:
+        lookup[_normalize('Mech')] = faction.mech
+    for base_name, override_type in faction.unit_overrides.items():
+        key = _normalize(base_name)
+        if key in lookup:
+            lookup[key] = override_type
 
 
 def show_unit_table(units: dict[str, UnitType], header: str) -> None:
@@ -270,6 +331,14 @@ def main(
         '--def-tech',
         help="Defender's technologies (space-separated, e.g. 'antimass duranium').",
     )] = None,
+    att_faction: Annotated[Optional[str], typer.Option(
+        '--att-faction',
+        help="Attacker's faction (e.g. 'sardakk'). Unlocks Flagship, Mech, faction abilities.",
+    )] = None,
+    def_faction: Annotated[Optional[str], typer.Option(
+        '--def-faction',
+        help="Defender's faction.",
+    )] = None,
     simulations: Annotated[int, typer.Option(
         '--simulations', '-n',
         help="Number of simulations to run.",
@@ -301,6 +370,58 @@ def main(
     # Interactive mode = neither main fleet was supplied on the command line.
     # In scripted mode, unspecified support flags simply default to empty — no prompts.
     interactive = attacker is None and defender is None
+
+    # --- Factions (resolve before fleet parsing so lookups are injected first) ---
+    att_faction_obj: Optional[FactionAbilities] = None
+    def_faction_obj: Optional[FactionAbilities] = None
+
+    if interactive and att_faction is None and def_faction is None:
+        all_factions = get_all_factions()
+        if all_factions:
+            from collections import defaultdict
+            typer.echo("\nAvailable factions (press Enter to skip):")
+            name_w = max(len(f.name) for f in all_factions)
+            for f in all_factions:
+                short = f.name.split()[0].lower()
+                line = f"  {f.name:{name_w}}  [{short}]"
+                if f.faction_tech_aliases:
+                    by_field: dict[str, list[str]] = defaultdict(list)
+                    for alias, field in f.faction_tech_aliases.items():
+                        by_field[field].append(alias)
+                    tech_parts = []
+                    for aliases in [v for _, v in sorted(by_field.items())]:
+                        tech_parts.append(" / ".join(sorted(aliases, key=len)))
+                    line += f"  —  faction techs: {',  '.join(tech_parts)}"
+                typer.echo(line)
+            typer.echo()
+
+    if att_faction is None and interactive:
+        raw = typer.prompt("Attacker faction (press Enter to skip)", default="")
+        att_faction = raw.strip() or None
+
+    if att_faction is not None:
+        att_faction_obj = parse_faction(att_faction, "Attacker faction")
+        if att_faction_obj is None:
+            raise typer.Exit(code=1)
+        inject_faction_units(main_lookup, att_faction_obj)
+        if att_faction_obj.flagship and category == 'Ship':
+            main_units['Flagship'] = att_faction_obj.flagship
+        if att_faction_obj.mech and category == 'Ground Force':
+            main_units['Mech'] = att_faction_obj.mech
+
+    if def_faction is None and interactive:
+        raw = typer.prompt("Defender faction (press Enter to skip)", default="")
+        def_faction = raw.strip() or None
+
+    if def_faction is not None:
+        def_faction_obj = parse_faction(def_faction, "Defender faction")
+        if def_faction_obj is None:
+            raise typer.Exit(code=1)
+        inject_faction_units(main_lookup, def_faction_obj)
+        if def_faction_obj.flagship and category == 'Ship':
+            main_units['Flagship'] = def_faction_obj.flagship
+        if def_faction_obj.mech and category == 'Ground Force':
+            main_units['Mech'] = def_faction_obj.mech
 
     if interactive:
         show_unit_table(main_units, f"Available units ({combat_type} combat)")
@@ -353,26 +474,26 @@ def main(
     if att_tech is None:
         if interactive:
             raw_at = typer.prompt("Attacker technologies (press Enter to skip)", default="")
-            att_tech_obj = parse_technologies(raw_at or None, "Attacker tech")
+            att_tech_obj = parse_technologies(raw_at or None, "Attacker tech", att_faction_obj)
             if att_tech_obj is None:
                 raise typer.Exit(code=1)
         else:
             att_tech_obj = Technologies()
     else:
-        att_tech_obj = parse_technologies(att_tech, "Attacker tech")
+        att_tech_obj = parse_technologies(att_tech, "Attacker tech", att_faction_obj)
         if att_tech_obj is None:
             raise typer.Exit(code=1)
 
     if def_tech is None:
         if interactive:
             raw_dt = typer.prompt("Defender technologies (press Enter to skip)", default="")
-            def_tech_obj = parse_technologies(raw_dt or None, "Defender tech")
+            def_tech_obj = parse_technologies(raw_dt or None, "Defender tech", def_faction_obj)
             if def_tech_obj is None:
                 raise typer.Exit(code=1)
         else:
             def_tech_obj = Technologies()
     else:
-        def_tech_obj = parse_technologies(def_tech, "Defender tech")
+        def_tech_obj = parse_technologies(def_tech, "Defender tech", def_faction_obj)
         if def_tech_obj is None:
             raise typer.Exit(code=1)
 
@@ -393,6 +514,8 @@ def main(
 
     # --- Run simulation ---
     typer.echo(f"\nRunning {simulations:,} simulations of {combat_type} combat...")
+    if att_faction_obj:
+        typer.echo(f"  Attacker faction: {att_faction_obj.name}")
     typer.echo(f"  Attacker        : {fleet_summary(attacker_units)}")
     if att_pds_units:
         typer.echo(f"  Attacker PDS    : {fleet_summary(att_pds_units)}")
@@ -400,6 +523,8 @@ def main(
         typer.echo(f"  Attacker ships  : {fleet_summary(att_ship_units)}")
     if att_tech_obj.active_names():
         typer.echo(f"  Attacker techs  : {', '.join(att_tech_obj.active_names())}")
+    if def_faction_obj:
+        typer.echo(f"  Defender faction: {def_faction_obj.name}")
     typer.echo(f"  Defender        : {fleet_summary(defender_units)}")
     if def_pds_units:
         typer.echo(f"  Defender PDS    : {fleet_summary(def_pds_units)}")
@@ -415,6 +540,8 @@ def main(
         def_pds=def_pds_units,
         att_techs=att_tech_obj,
         def_techs=def_tech_obj,
+        att_faction=att_faction_obj,
+        def_faction=def_faction_obj,
         n_simulations=simulations,
     )
 

@@ -6,6 +6,7 @@ from typing import Optional
 
 from units import UnitType, Ability
 from technologies import Technologies
+from factions import FactionAbilities
 
 
 class CombatResult(Enum):
@@ -57,9 +58,9 @@ class Unit:
     def can_sustain(self) -> bool:
         return self.unit_type.sustain_damage and not self.damaged
 
-    def roll_combat(self) -> int:
+    def roll_combat(self, roll_modifier: int = 0) -> int:
         c = self.effective_combat
-        return _roll_ability(c) if c is not None else 0
+        return _roll_ability_with_modifier(c, roll_modifier) if c is not None else 0
 
 
 # ---------------------------------------------------------------------------
@@ -77,6 +78,20 @@ def _roll_die(combat_value: int, antimass: bool = False) -> int:
 def _roll_ability(ability: Ability, antimass: bool = False) -> int:
     """Roll all dice for an ability and return total hits."""
     return sum(_roll_die(ability.combat_value, antimass) for _ in range(ability.num_dice))
+
+
+def _roll_ability_with_modifier(ability: Ability, roll_modifier: int) -> int:
+    """Roll all dice for an ability with a flat roll modifier and return total hits.
+
+    roll_modifier is added to each die result before comparing to combat_value.
+    Positive values favour the roller (e.g. Sardakk +1); negative disfavour them.
+    """
+    hits = 0
+    for _ in range(ability.num_dice):
+        result = random.randint(1, 10) + roll_modifier
+        if result >= ability.combat_value:
+            hits += 1
+    return hits
 
 
 def roll_sc_hits(
@@ -316,11 +331,14 @@ def simulate_space_combat(
     def_pds: Optional[list[Unit]] = None,
     att_techs: Optional[Technologies] = None,
     def_techs: Optional[Technologies] = None,
+    att_faction: Optional[FactionAbilities] = None,
+    def_faction: Optional[FactionAbilities] = None,
 ) -> CombatResult:
     """
     Simulate a single space combat to conclusion (no retreats).
 
     Pre-combat sequence:
+      0. Faction pre_space_combat hook (e.g. Mentak Ambush).
       1. Space Cannon Offence — both sides' PDS fire simultaneously;
          hits assigned to any ship (incl. Fighters).
          Antimass: each side's Antimass reduces incoming SC die rolls by 1.
@@ -328,32 +346,40 @@ def simulate_space_combat(
          Plasma Scoring: +1 extra die at best CV.
       2. Anti-Fighter Barrage — both sides' Destroyers fire simultaneously;
          hits assigned to Fighters only (no sustain).
-      3. Assault Cannon — if ≥3 non-Fighter ships, destroy cheapest enemy
+      3. Faction post_afb_space hook.
+      4. Assault Cannon — if ≥3 non-Fighter ships, destroy cheapest enemy
          non-Fighter (simultaneous, no sustain; checked after SC+AFB).
-      4. Main combat rounds — both sides roll simultaneously until eliminated.
+      5. Main combat rounds — both sides roll simultaneously until eliminated.
+         combat_roll_modifier applied per unit (e.g. Sardakk +1, Jol-Nar -1).
+         Faction end_of_round hook (after hits, before Duranium).
          Duranium Armour: repair 1 unit/round (checked before win condition).
     """
     att_pds = att_pds or []
     def_pds = def_pds or []
     at = att_techs or Technologies()
     dt = def_techs or Technologies()
+    af = att_faction or FactionAbilities()
+    df = def_faction or FactionAbilities()
 
     attackers = [copy.copy(u) for u in att_ships]
     defenders = [copy.copy(u) for u in def_ships]
 
+    # --- Step 0: Faction pre-combat hooks ---
+    attackers, defenders = af.pre_space_combat(attackers, defenders)
+    defenders, attackers = df.pre_space_combat(defenders, attackers)
+
+    if not attackers or not defenders:
+        return _determine_result(attackers, defenders)
+
     # --- Step 1: Space Cannon Offence (simultaneous) ---
-    # Attacker's SC hits defenders; defender's SC hits attackers.
-    # antimass on each side applies to the incoming fire against that side.
     att_sc = roll_sc_hits(att_pds, plasma_scoring=at.plasma_scoring, antimass=dt.antimass_deflectors)
     def_sc = roll_sc_hits(def_pds, plasma_scoring=dt.plasma_scoring, antimass=at.antimass_deflectors)
 
-    # Apply Graviton for attacker's SC: must target non-Fighters in defenders
     if at.graviton_laser_system:
         defenders = assign_hits_graviton(defenders, att_sc)
     else:
         defenders = assign_hits(defenders, att_sc)
 
-    # defender's SC hits attackers (attacker's Antimass reduces incoming die rolls)
     if dt.graviton_laser_system:
         attackers = assign_hits_graviton(attackers, def_sc)
     else:
@@ -371,14 +397,20 @@ def simulate_space_combat(
     if not attackers or not defenders:
         return _determine_result(attackers, defenders)
 
-    # --- Step 3: Assault Cannon (simultaneous) ---
+    # --- Step 3: Faction post-AFB hooks ---
+    attackers, defenders = af.post_afb_space(attackers, defenders)
+    defenders, attackers = df.post_afb_space(defenders, attackers)
+
+    if not attackers or not defenders:
+        return _determine_result(attackers, defenders)
+
+    # --- Step 4: Assault Cannon (simultaneous) ---
     att_non_fighters = [u for u in attackers if u.name != 'Fighter']
     def_non_fighters = [u for u in defenders if u.name != 'Fighter']
 
     att_fires_ac = at.assault_cannon and len(att_non_fighters) >= 3
     def_fires_ac = dt.assault_cannon and len(def_non_fighters) >= 3
 
-    # Simultaneous: compute targets before applying either result
     if att_fires_ac:
         defenders = destroy_cheapest_non_fighter(defenders)
     if def_fires_ac:
@@ -389,14 +421,17 @@ def simulate_space_combat(
 
     # --- Main combat rounds ---
     while attackers and defenders:
-        _reset_suspended_flags = _reset_sustained_flags  # alias for clarity
-        _reset_suspended_flags(attackers)
-        _reset_suspended_flags(defenders)
+        _reset_sustained_flags(attackers)
+        _reset_sustained_flags(defenders)
 
-        att_hits = sum(u.roll_combat() for u in attackers)
-        def_hits = sum(u.roll_combat() for u in defenders)
+        att_hits = sum(u.roll_combat(af.get_combat_roll_modifier(u, attackers)) for u in attackers)
+        def_hits = sum(u.roll_combat(df.get_combat_roll_modifier(u, defenders)) for u in defenders)
         attackers = assign_hits(attackers, def_hits)
         defenders = assign_hits(defenders, att_hits)
+
+        # Faction end-of-round hooks (before Duranium)
+        attackers, defenders = af.end_of_round_space(attackers, defenders)
+        defenders, attackers = df.end_of_round_space(defenders, attackers)
 
         # Duranium Armour: repair before checking win condition
         if at.duranium_armour:
@@ -418,6 +453,8 @@ def simulate_ground_combat(
     def_pds: Optional[list[Unit]] = None,
     att_techs: Optional[Technologies] = None,
     def_techs: Optional[Technologies] = None,
+    att_faction: Optional[FactionAbilities] = None,
+    def_faction: Optional[FactionAbilities] = None,
 ) -> CombatResult:
     """
     Simulate a single ground combat to conclusion (no retreats).
@@ -433,15 +470,20 @@ def simulate_ground_combat(
          Antimass: attacker's Antimass reduces incoming SC die rolls by 1.
       3. Magen Defence Grid — if defender has this tech AND a PDS structure,
          score 1 free hit against attacker's ground forces (after SC Defence).
-      4. Main combat rounds:
-         X-89 (attacker): double all hits against defending ground forces.
-         X-89 (defender): double all hits against attacking ground forces.
+      4. Faction pre_ground_rounds hooks (e.g. L1Z1X Harrow).
+      5. Main combat rounds:
+         combat_roll_modifier applied per unit (faction ability).
+         X-89 (attacker): double all hits on defending ground forces.
+         X-89 (defender): double all hits on attacking ground forces.
+         Faction end_of_round hook (after hits, before Duranium).
          Duranium Armour: repair 1 unit/round (before win condition check).
     """
     att_ships = att_ships or []
     def_pds = def_pds or []
     at = att_techs or Technologies()
     dt = def_techs or Technologies()
+    af = att_faction or FactionAbilities()
+    df = def_faction or FactionAbilities()
 
     attackers = [copy.copy(u) for u in att_ground]
     defenders = [copy.copy(u) for u in def_ground]
@@ -472,13 +514,24 @@ def simulate_ground_combat(
         if not attackers:
             return _determine_result(attackers, defenders)
 
+    # --- Step 4: Faction pre-round hooks (e.g. L1Z1X Harrow) ---
+    attackers, defenders = af.pre_ground_rounds(attackers, defenders)
+    defenders, attackers = df.pre_ground_rounds(defenders, attackers)
+
+    if not attackers or not defenders:
+        return _determine_result(attackers, defenders)
+
     # --- Main combat rounds ---
     while attackers and defenders:
         _reset_sustained_flags(attackers)
         _reset_sustained_flags(defenders)
 
-        att_hits = sum(u.roll_combat() for u in attackers)
-        def_hits = sum(u.roll_combat() for u in defenders)
+        att_hits_raw = sum(u.roll_combat(af.get_combat_roll_modifier(u, attackers)) for u in attackers)
+        def_hits_raw = sum(u.roll_combat(df.get_combat_roll_modifier(u, defenders)) for u in defenders)
+
+        # post_roll_ground hooks use RAW values so simultaneous effects resolve correctly
+        att_hits = af.post_roll_ground(att_hits_raw, def_hits_raw)
+        def_hits = df.post_roll_ground(def_hits_raw, att_hits_raw)
 
         # X-89 doubles all hits produced by ground forces
         if at.x89_bacterial_weapon:
@@ -488,6 +541,10 @@ def simulate_ground_combat(
 
         attackers = assign_hits(attackers, def_hits)
         defenders = assign_hits(defenders, att_hits)
+
+        # Faction end-of-round hooks (before Duranium)
+        attackers, defenders = af.end_of_round_ground(attackers, defenders)
+        defenders, attackers = df.end_of_round_ground(defenders, attackers)
 
         # Duranium Armour: repair before checking win condition
         if at.duranium_armour:
