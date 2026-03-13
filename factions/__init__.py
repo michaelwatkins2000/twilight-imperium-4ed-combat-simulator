@@ -151,14 +151,16 @@ def _normalize_faction(name: str) -> str:
 def register_faction(faction: FactionAbilities) -> None:
     """
     Register a faction instance so it can be retrieved by name or any alias.
-    Automatically also registers the first word of the faction name as a short alias
-    (e.g. "Sardakk N'orr" → also registered as "sardakk").
+    Automatically registers a short alias: the first word of the name, skipping
+    a leading 'The' (e.g. "The Arborec" → "arborec", "Sardakk N'orr" → "sardakk").
     Factions may provide additional aliases via their `name_aliases` attribute.
     """
     key = _normalize_faction(faction.name)
     _REGISTRY[key] = faction
-    # Short alias: first word of the name
-    first_word = _normalize_faction(faction.name.split()[0])
+    # Short alias: skip a leading "the"
+    words = faction.name.split()
+    short_word = words[1] if words[0].lower() == 'the' and len(words) > 1 else words[0]
+    first_word = _normalize_faction(short_word)
     if first_word != key:
         _REGISTRY[first_word] = faction
     # Any extra aliases the faction declares

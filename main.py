@@ -139,6 +139,17 @@ def prompt_optional_fleet(label: str, lookup: dict[str, UnitType]) -> list[Unit]
 # Display helpers
 # ---------------------------------------------------------------------------
 
+def _unit_brief(ut: UnitType) -> str:
+    """Compact stats for a unit used in the faction listing."""
+    parts = []
+    if ut.combat:
+        dice = f" ({ut.combat.num_dice} dice)" if ut.combat.num_dice > 1 else ""
+        parts.append(f"combat {ut.combat.combat_value}{dice}")
+    if ut.sustain_damage:
+        parts.append("sustain")
+    return ", ".join(parts) if parts else "—"
+
+
 def _ab(ab: Optional[Ability]) -> str:
     """Format an Ability for display: '5' or '5 (3 dice)'."""
     if ab is None:
@@ -363,7 +374,8 @@ def main(
     pds_units  = {n: ut for n, ut in all_unit_types.items() if ut.unit_category == 'Structure'}
     ship_units = {n: ut for n, ut in all_unit_types.items() if ut.unit_category == 'Ship'}
 
-    main_lookup = build_lookup(main_units)
+    att_main_lookup = build_lookup(main_units)
+    def_main_lookup = build_lookup(main_units)
     pds_lookup  = build_lookup(pds_units)
     ship_lookup = build_lookup(ship_units)
 
@@ -382,7 +394,8 @@ def main(
             typer.echo("\nAvailable factions (press Enter to skip):")
             name_w = max(len(f.name) for f in all_factions)
             for f in all_factions:
-                short = f.name.split()[0].lower()
+                words = f.name.split()
+                short = (words[1] if words[0].lower() == 'the' and len(words) > 1 else words[0]).lower()
                 line = f"  {f.name:{name_w}}  [{short}]"
                 if f.faction_tech_aliases:
                     by_field: dict[str, list[str]] = defaultdict(list)
@@ -393,7 +406,11 @@ def main(
                         tech_parts.append(" / ".join(sorted(aliases, key=len)))
                     line += f"  —  faction techs: {',  '.join(tech_parts)}"
                 typer.echo(line)
-            typer.echo()
+                if f.flagship:
+                    typer.echo(f"      Flagship : {_unit_brief(f.flagship)}")
+                if f.mech:
+                    typer.echo(f"      Mech     : {_unit_brief(f.mech)}")
+                typer.echo()
 
     if att_faction is None and interactive:
         raw = typer.prompt("Attacker faction (press Enter to skip)", default="")
@@ -403,11 +420,7 @@ def main(
         att_faction_obj = parse_faction(att_faction, "Attacker faction")
         if att_faction_obj is None:
             raise typer.Exit(code=1)
-        inject_faction_units(main_lookup, att_faction_obj)
-        if att_faction_obj.flagship and category == 'Ship':
-            main_units['Flagship'] = att_faction_obj.flagship
-        if att_faction_obj.mech and category == 'Ground Force':
-            main_units['Mech'] = att_faction_obj.mech
+        inject_faction_units(att_main_lookup, att_faction_obj)
 
     if def_faction is None and interactive:
         raw = typer.prompt("Defender faction (press Enter to skip)", default="")
@@ -417,28 +430,29 @@ def main(
         def_faction_obj = parse_faction(def_faction, "Defender faction")
         if def_faction_obj is None:
             raise typer.Exit(code=1)
-        inject_faction_units(main_lookup, def_faction_obj)
-        if def_faction_obj.flagship and category == 'Ship':
-            main_units['Flagship'] = def_faction_obj.flagship
-        if def_faction_obj.mech and category == 'Ground Force':
-            main_units['Mech'] = def_faction_obj.mech
+        inject_faction_units(def_main_lookup, def_faction_obj)
 
     if interactive:
         show_unit_table(main_units, f"Available units ({combat_type} combat)")
+        has_flagship = (att_faction_obj and att_faction_obj.flagship) or (def_faction_obj and def_faction_obj.flagship)
+        has_mech = (att_faction_obj and att_faction_obj.mech) or (def_faction_obj and def_faction_obj.mech)
+        if (has_flagship and category == 'Ship') or (has_mech and category == 'Ground Force'):
+            unit_name = 'Flagship' if category == 'Ship' else 'Mech'
+            typer.echo(f"  {unit_name} also available — enter as '{unit_name}:1' (stats shown above)")
 
     # --- Main fleets ---
     if attacker is None:
         typer.echo()
-        attacker_units = prompt_fleet("Attacker", main_lookup)
+        attacker_units = prompt_fleet("Attacker", att_main_lookup)
     else:
-        attacker_units = parse_fleet(attacker, main_lookup, "Attacker")
+        attacker_units = parse_fleet(attacker, att_main_lookup, "Attacker")
         if attacker_units is None:
             raise typer.Exit(code=1)
 
     if defender is None:
-        defender_units = prompt_fleet("Defender", main_lookup)
+        defender_units = prompt_fleet("Defender", def_main_lookup)
     else:
-        defender_units = parse_fleet(defender, main_lookup, "Defender")
+        defender_units = parse_fleet(defender, def_main_lookup, "Defender")
         if defender_units is None:
             raise typer.Exit(code=1)
 
