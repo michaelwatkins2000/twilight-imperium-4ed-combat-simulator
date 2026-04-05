@@ -1,12 +1,14 @@
 """
-Phase 4 — Faction-specific units, abilities, and technologies.
+Phase 4 — Faction-specific units, abilities, technologies, and agents.
 
 Each faction is implemented in its own module (e.g. factions/sardakk.py) and
-registers itself by calling register_faction() at import time.
+registers itself by calling register_faction() at import time.  Agents are
+registered via register_agent() in the same module.
 
 Usage in combat/simulator:
-    from factions import get_faction, FactionAbilities
-    faction = get_faction("sardakk")   # returns FactionAbilities instance or None
+    from factions import get_faction, FactionAbilities, get_agent, AgentAbilities
+    faction = get_faction("sardakk")   # FactionAbilities instance or None
+    agent  = get_agent("sol")          # AgentAbilities instance or None
 
 FactionAbilities hooks (override in subclasses as needed):
     pre_space_combat(own, enemy)          → (own, enemy)   before SC Offence
@@ -16,6 +18,13 @@ FactionAbilities hooks (override in subclasses as needed):
     end_of_round_space(own, enemy)        → (own, enemy)   end of each space combat round
     end_of_round_ground(own, enemy)       → (own, enemy)   end of each ground combat round
     get_combat_roll_modifier(unit, fleet) → int            per-unit roll modifier
+
+AgentAbilities hooks (override in subclasses as needed):
+    start_of_space_round(own, enemy, round_num) → (own, enemy)
+    extra_hits_space_round(own, enemy, round_num) → int
+    start_of_ground_round(own, enemy, round_num) → (own, enemy)
+    extra_hits_ground_round(own, enemy, round_num) → int
+    Agents are single-use; by convention implementations gate on round_num == 1.
 
 Unit injection (set in faction __init__):
     flagship        UnitType accessible as "Flagship" in fleet parser
@@ -201,6 +210,100 @@ def get_all_factions() -> list['FactionAbilities']:
 def normalize_tech_alias(token: str) -> str:
     """Normalise a faction-tech token for alias lookup."""
     return token.lower().replace(' ', '').replace('_', '').replace('-', '')
+
+
+# ---------------------------------------------------------------------------
+# Agent system
+# ---------------------------------------------------------------------------
+
+class AgentAbilities:
+    """
+    Base class for faction agent abilities. All hooks are no-ops by default.
+    Subclass and override only what the agent needs.
+
+    Agents are single-use — by convention, implementations gate their effect
+    on round_num == 1 (optimal play: always use on the first round).
+
+    extra_hits_* hooks return additional hits added to the rolling side's raw
+    hit count (before X-89 doubling, after unit rolls).
+    """
+
+    name: str = "Generic Agent"
+    faction_source: str = ""   # display name of the faction that owns this agent
+
+    def start_of_space_round(
+        self,
+        own: list['Unit'],
+        enemy: list['Unit'],
+        round_num: int,
+    ) -> tuple[list['Unit'], list['Unit']]:
+        """Called at the start of each space combat round before rolling."""
+        return own, enemy
+
+    def extra_hits_space_round(
+        self,
+        own: list['Unit'],
+        enemy: list['Unit'],
+        round_num: int,
+    ) -> int:
+        """Extra hits contributed by this agent to own side in a space round."""
+        return 0
+
+    def start_of_ground_round(
+        self,
+        own: list['Unit'],
+        enemy: list['Unit'],
+        round_num: int,
+    ) -> tuple[list['Unit'], list['Unit']]:
+        """Called at the start of each ground combat round before rolling."""
+        return own, enemy
+
+    def extra_hits_ground_round(
+        self,
+        own: list['Unit'],
+        enemy: list['Unit'],
+        round_num: int,
+    ) -> int:
+        """Extra hits contributed by this agent to own side in a ground round."""
+        return 0
+
+
+_AGENT_REGISTRY: dict[str, AgentAbilities] = {}
+
+
+def register_agent(agent: AgentAbilities) -> None:
+    """
+    Register an agent so it can be retrieved by its faction_source name or
+    the short alias (first non-'The' word, same convention as register_faction).
+    Additional aliases may be declared via the agent's `name_aliases` attribute.
+    """
+    key = _normalize_faction(agent.faction_source)
+    _AGENT_REGISTRY[key] = agent
+    words = agent.faction_source.split()
+    short_word = words[1] if words[0].lower() == 'the' and len(words) > 1 else words[0]
+    short = _normalize_faction(short_word)
+    if short != key:
+        _AGENT_REGISTRY[short] = agent
+    # Mirror the owning faction's name_aliases into the agent registry,
+    # so any alias that works for --att-faction also works for --att-agents.
+    faction = _REGISTRY.get(key)
+    if faction is not None:
+        for alias in getattr(faction, 'name_aliases', []):
+            _AGENT_REGISTRY[_normalize_faction(alias)] = agent
+
+
+def get_agent(name: str) -> Optional[AgentAbilities]:
+    """
+    Look up an agent by faction name. Returns a shallow copy so each
+    simulation run gets a fresh instance. Returns None if not found.
+    """
+    singleton = _AGENT_REGISTRY.get(_normalize_faction(name))
+    return copy.copy(singleton) if singleton is not None else None
+
+
+def list_agents() -> list[str]:
+    """Return a sorted deduplicated list of faction_source names with agents."""
+    return sorted({a.faction_source for a in _AGENT_REGISTRY.values()})
 
 
 def _import_all() -> None:

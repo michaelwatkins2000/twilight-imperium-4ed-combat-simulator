@@ -6,7 +6,7 @@ from typing import Optional
 
 from units import UnitType, Ability
 from technologies import Technologies
-from factions import FactionAbilities
+from factions import FactionAbilities, AgentAbilities
 
 
 class CombatResult(Enum):
@@ -56,7 +56,11 @@ class Unit:
 
     @property
     def can_sustain(self) -> bool:
-        return self.unit_type.sustain_damage and not self.damaged
+        if self.upgraded and self.unit_type.upgraded_sustain_damage is not None:
+            sustains = self.unit_type.upgraded_sustain_damage
+        else:
+            sustains = self.unit_type.sustain_damage
+        return sustains and not self.damaged
 
     def roll_combat(self, roll_modifier: int = 0) -> int:
         c = self.effective_combat
@@ -333,23 +337,26 @@ def simulate_space_combat(
     def_techs: Optional[Technologies] = None,
     att_faction: Optional[FactionAbilities] = None,
     def_faction: Optional[FactionAbilities] = None,
+    att_agents: Optional[list[AgentAbilities]] = None,
+    def_agents: Optional[list[AgentAbilities]] = None,
 ) -> CombatResult:
     """
     Simulate a single space combat to conclusion (no retreats).
 
     Pre-combat sequence:
       0. Faction pre_space_combat hook (e.g. Mentak Ambush).
-      1. Space Cannon Offence — both sides' PDS fire simultaneously;
+      1. Assault Cannon — if ≥3 non-Fighter ships, destroy cheapest enemy
+         non-Fighter (simultaneous, no sustain; checked before SC+AFB).
+      2. Space Cannon Offence — both sides' PDS fire simultaneously;
          hits assigned to any ship (incl. Fighters).
          Antimass: each side's Antimass reduces incoming SC die rolls by 1.
          Graviton: each side's SC hits must target non-Fighters first.
          Plasma Scoring: +1 extra die at best CV.
-      2. Anti-Fighter Barrage — both sides' Destroyers fire simultaneously;
+      3. Anti-Fighter Barrage — both sides' Destroyers fire simultaneously;
          hits assigned to Fighters only (no sustain).
-      3. Faction post_afb_space hook.
-      4. Assault Cannon — if ≥3 non-Fighter ships, destroy cheapest enemy
-         non-Fighter (simultaneous, no sustain; checked after SC+AFB).
+      4. Faction post_afb_space hook.
       5. Main combat rounds — both sides roll simultaneously until eliminated.
+         Agent start_of_space_round hook, then extra_hits_space_round added to raw.
          combat_roll_modifier applied per unit (e.g. Sardakk +1, Jol-Nar -1).
          Faction end_of_round hook (after hits, before Duranium).
          Duranium Armour: repair 1 unit/round (checked before win condition).
@@ -360,6 +367,8 @@ def simulate_space_combat(
     dt = def_techs or Technologies()
     af = att_faction or FactionAbilities()
     df = def_faction or FactionAbilities()
+    aa: list[AgentAbilities] = att_agents or []
+    da: list[AgentAbilities] = def_agents or []
 
     attackers = [copy.copy(u) for u in att_ships]
     defenders = [copy.copy(u) for u in def_ships]
@@ -371,7 +380,22 @@ def simulate_space_combat(
     if not attackers or not defenders:
         return _determine_result(attackers, defenders)
 
-    # --- Step 1: Space Cannon Offence (simultaneous) ---
+    # --- Step 1: Assault Cannon (simultaneous, before SC+AFB) ---
+    att_non_fighters = [u for u in attackers if u.name != 'Fighter']
+    def_non_fighters = [u for u in defenders if u.name != 'Fighter']
+
+    att_fires_ac = at.assault_cannon and len(att_non_fighters) >= 3
+    def_fires_ac = dt.assault_cannon and len(def_non_fighters) >= 3
+
+    if att_fires_ac:
+        defenders = destroy_cheapest_non_fighter(defenders)
+    if def_fires_ac:
+        attackers = destroy_cheapest_non_fighter(attackers)
+
+    if not attackers or not defenders:
+        return _determine_result(attackers, defenders)
+
+    # --- Step 2: Space Cannon Offence (simultaneous) ---
     att_sc = roll_sc_hits(att_pds, plasma_scoring=at.plasma_scoring, antimass=dt.antimass_deflectors)
     def_sc = roll_sc_hits(def_pds, plasma_scoring=dt.plasma_scoring, antimass=at.antimass_deflectors)
 
@@ -388,7 +412,7 @@ def simulate_space_combat(
     if not attackers or not defenders:
         return _determine_result(attackers, defenders)
 
-    # --- Step 2: Anti-Fighter Barrage (simultaneous) ---
+    # --- Step 3: Anti-Fighter Barrage (simultaneous) ---
     att_afb = sum(_roll_ability(u.effective_afb) for u in attackers if u.effective_afb)
     def_afb = sum(_roll_ability(u.effective_afb) for u in defenders if u.effective_afb)
     attackers = assign_hits_to_fighters(attackers, def_afb)
@@ -397,35 +421,31 @@ def simulate_space_combat(
     if not attackers or not defenders:
         return _determine_result(attackers, defenders)
 
-    # --- Step 3: Faction post-AFB hooks ---
+    # --- Step 4: Faction post-AFB hooks ---
     attackers, defenders = af.post_afb_space(attackers, defenders)
     defenders, attackers = df.post_afb_space(defenders, attackers)
 
     if not attackers or not defenders:
         return _determine_result(attackers, defenders)
 
-    # --- Step 4: Assault Cannon (simultaneous) ---
-    att_non_fighters = [u for u in attackers if u.name != 'Fighter']
-    def_non_fighters = [u for u in defenders if u.name != 'Fighter']
-
-    att_fires_ac = at.assault_cannon and len(att_non_fighters) >= 3
-    def_fires_ac = dt.assault_cannon and len(def_non_fighters) >= 3
-
-    if att_fires_ac:
-        defenders = destroy_cheapest_non_fighter(defenders)
-    if def_fires_ac:
-        attackers = destroy_cheapest_non_fighter(attackers)
-
-    if not attackers or not defenders:
-        return _determine_result(attackers, defenders)
-
     # --- Main combat rounds ---
+    round_num = 0
     while attackers and defenders:
+        round_num += 1
         _reset_sustained_flags(attackers)
         _reset_sustained_flags(defenders)
 
+        # Agent start-of-round hooks
+        for agent in aa:
+            attackers, defenders = agent.start_of_space_round(attackers, defenders, round_num)
+        for agent in da:
+            defenders, attackers = agent.start_of_space_round(defenders, attackers, round_num)
+
         att_hits = sum(u.roll_combat(af.get_combat_roll_modifier(u, attackers)) for u in attackers)
+        att_hits += sum(agent.extra_hits_space_round(attackers, defenders, round_num) for agent in aa)
         def_hits = sum(u.roll_combat(df.get_combat_roll_modifier(u, defenders)) for u in defenders)
+        def_hits += sum(agent.extra_hits_space_round(defenders, attackers, round_num) for agent in da)
+
         attackers = assign_hits(attackers, def_hits)
         defenders = assign_hits(defenders, att_hits)
 
@@ -455,6 +475,8 @@ def simulate_ground_combat(
     def_techs: Optional[Technologies] = None,
     att_faction: Optional[FactionAbilities] = None,
     def_faction: Optional[FactionAbilities] = None,
+    att_agents: Optional[list[AgentAbilities]] = None,
+    def_agents: Optional[list[AgentAbilities]] = None,
 ) -> CombatResult:
     """
     Simulate a single ground combat to conclusion (no retreats).
@@ -484,6 +506,8 @@ def simulate_ground_combat(
     dt = def_techs or Technologies()
     af = att_faction or FactionAbilities()
     df = def_faction or FactionAbilities()
+    aa: list[AgentAbilities] = att_agents or []
+    da: list[AgentAbilities] = def_agents or []
 
     attackers = [copy.copy(u) for u in att_ground]
     defenders = [copy.copy(u) for u in def_ground]
@@ -522,12 +546,23 @@ def simulate_ground_combat(
         return _determine_result(attackers, defenders)
 
     # --- Main combat rounds ---
+    round_num = 0
     while attackers and defenders:
+        round_num += 1
         _reset_sustained_flags(attackers)
         _reset_sustained_flags(defenders)
 
+        # Agent start-of-round hooks
+        for agent in aa:
+            attackers, defenders = agent.start_of_ground_round(attackers, defenders, round_num)
+        for agent in da:
+            defenders, attackers = agent.start_of_ground_round(defenders, attackers, round_num)
+
+        # Agent extra hits added to raw count (subject to X-89 doubling)
         att_hits_raw = sum(u.roll_combat(af.get_combat_roll_modifier(u, attackers)) for u in attackers)
+        att_hits_raw += sum(agent.extra_hits_ground_round(attackers, defenders, round_num) for agent in aa)
         def_hits_raw = sum(u.roll_combat(df.get_combat_roll_modifier(u, defenders)) for u in defenders)
+        def_hits_raw += sum(agent.extra_hits_ground_round(defenders, attackers, round_num) for agent in da)
 
         # post_roll_ground hooks use RAW values so simultaneous effects resolve correctly
         att_hits = af.post_roll_ground(att_hits_raw, def_hits_raw)

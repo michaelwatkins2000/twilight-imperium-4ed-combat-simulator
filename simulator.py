@@ -3,7 +3,7 @@ from typing import Optional
 
 from combat import CombatResult, Unit, simulate_space_combat, simulate_ground_combat
 from technologies import Technologies
-from factions import FactionAbilities
+from factions import FactionAbilities, AgentAbilities
 
 
 def run_simulation(
@@ -18,6 +18,8 @@ def run_simulation(
     def_techs: Optional[Technologies] = None,
     att_faction: Optional[FactionAbilities] = None,
     def_faction: Optional[FactionAbilities] = None,
+    att_agents: Optional[list[AgentAbilities]] = None,
+    def_agents: Optional[list[AgentAbilities]] = None,
     n_simulations: int = 10_000,
 ) -> dict:
     """
@@ -34,6 +36,8 @@ def run_simulation(
     def_techs    : defender's active generic technologies
     att_faction  : attacker's faction abilities
     def_faction  : defender's faction abilities
+    att_agents   : attacker's active agents
+    def_agents   : defender's active agents
     """
     att_pds = att_pds or []
     att_ships = att_ships or []
@@ -48,11 +52,13 @@ def run_simulation(
             result = simulate_space_combat(
                 att_main, def_main, att_pds, def_pds,
                 att_techs, def_techs, att_faction, def_faction,
+                att_agents, def_agents,
             )
         else:
             result = simulate_ground_combat(
                 att_main, def_main, att_ships, def_pds,
                 att_techs, def_techs, att_faction, def_faction,
+                att_agents, def_agents,
             )
         results[result] += 1
 

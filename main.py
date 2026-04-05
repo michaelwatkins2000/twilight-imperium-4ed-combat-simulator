@@ -33,7 +33,10 @@ from units import UnitType, Ability, load_unit_types, build_lookup, _normalize
 from combat import Unit
 from simulator import run_simulation
 from technologies import Technologies
-from factions import FactionAbilities, get_faction, list_factions, get_all_factions, normalize_tech_alias
+from factions import (
+    FactionAbilities, get_faction, list_factions, get_all_factions, normalize_tech_alias,
+    AgentAbilities, get_agent, list_agents,
+)
 
 app = typer.Typer(add_completion=False)
 
@@ -193,6 +196,8 @@ def _unit_row(ut: UnitType) -> str:
         upgrades.append(f"bombard {_ab(ut.upgraded_bombardment)}")
     if ut.upgraded_space_cannon and ut.upgraded_space_cannon != ut.space_cannon:
         upgrades.append(f"space cannon {_ab(ut.upgraded_space_cannon)}")
+    if ut.upgraded_sustain_damage is not None and ut.upgraded_sustain_damage != ut.sustain_damage:
+        upgrades.append("gains sustain" if ut.upgraded_sustain_damage else "loses sustain")
 
     upgrade_str = ", ".join(upgrades) if upgrades else "no stat changes"
     return f"{base}  →  upgrade: {upgrade_str}"
@@ -205,7 +210,7 @@ TECH_DISPLAY = {
     'plasma_scoring':        ('plasma',  'SC + Bombardment: +1 extra die at best combat value'),
     'magen_defence_grid':    ('magen',   'Ground: 1 free hit on attacker after SC Defence'),
     'duranium_armour':       ('duranium','All: repair 1 damaged unit/round (not sustained this round)'),
-    'assault_cannon':        ('assault', 'Space: destroy cheapest enemy non-Fighter if ≥3 own non-Fighters'),
+    'assault_cannon':        ('assault', 'Space: before SC/AFB, destroy cheapest enemy non-Fighter if ≥3 own non-Fighters'),
 }
 
 
@@ -264,6 +269,24 @@ def parse_faction(raw: Optional[str], label: str) -> Optional[FactionAbilities]:
             err=True,
         )
     return faction  # None on unknown, FactionAbilities on success
+
+
+def parse_agents(raw: Optional[str], label: str) -> Optional[list[AgentAbilities]]:
+    """
+    Parse a space-separated list of faction names into a list of AgentAbilities.
+    Returns an empty list for blank input, None on any unknown name.
+    """
+    if not raw or not raw.strip():
+        return []
+    agents: list[AgentAbilities] = []
+    for token in raw.strip().split():
+        agent = get_agent(token)
+        if agent is None:
+            available = ', '.join(list_agents()) or '(none registered yet)'
+            typer.echo(f"  [{label}] Unknown agent '{token}'. Available: {available}", err=True)
+            return None
+        agents.append(agent)
+    return agents
 
 
 def inject_faction_units(
@@ -349,6 +372,14 @@ def main(
     def_faction: Annotated[Optional[str], typer.Option(
         '--def-faction',
         help="Defender's faction.",
+    )] = None,
+    att_agents_raw: Annotated[Optional[str], typer.Option(
+        '--att-agents',
+        help="Attacker's agents — space-separated faction names (e.g. 'sol sardakk').",
+    )] = None,
+    def_agents_raw: Annotated[Optional[str], typer.Option(
+        '--def-agents',
+        help="Defender's agents — space-separated faction names (e.g. 'sol').",
     )] = None,
     simulations: Annotated[int, typer.Option(
         '--simulations', '-n',
@@ -516,7 +547,9 @@ def main(
     if combat_type == 'ground':
         if att_ships is None:
             if interactive:
-                show_unit_table(ship_units, "Available ships for orbital bombardment")
+                bombard_units = {n: ut for n, ut in ship_units.items()
+                                 if ut.bombardment or ut.upgraded_bombardment}
+                show_unit_table(bombard_units, "Available ships for orbital bombardment")
                 typer.echo()
                 att_ship_units = prompt_optional_fleet("Attacker ships in orbit", ship_lookup)
             # else: no orbital ships (scripted, flag not provided)
@@ -525,6 +558,30 @@ def main(
             if result is None:
                 raise typer.Exit(code=1)
             att_ship_units = result
+
+    # --- Agents ---
+    if att_agents_raw is not None:
+        att_agent_list = parse_agents(att_agents_raw, "Attacker agents")
+        if att_agent_list is None:
+            raise typer.Exit(code=1)
+    elif interactive:
+        available_agents = list_agents()
+        if available_agents:
+            typer.echo(f"\nAvailable agents: {', '.join(available_agents)}")
+        raw_aa = typer.prompt("Attacker agents (press Enter to skip)", default="")
+        att_agent_list = parse_agents(raw_aa or None, "Attacker agents") or []
+    else:
+        att_agent_list = []
+
+    if def_agents_raw is not None:
+        def_agent_list = parse_agents(def_agents_raw, "Defender agents")
+        if def_agent_list is None:
+            raise typer.Exit(code=1)
+    elif interactive:
+        raw_da = typer.prompt("Defender agents (press Enter to skip)", default="")
+        def_agent_list = parse_agents(raw_da or None, "Defender agents") or []
+    else:
+        def_agent_list = []
 
     # --- Run simulation ---
     typer.echo(f"\nRunning {simulations:,} simulations of {combat_type} combat...")
@@ -537,6 +594,8 @@ def main(
         typer.echo(f"  Attacker ships  : {fleet_summary(att_ship_units)}")
     if att_tech_obj.active_names():
         typer.echo(f"  Attacker techs  : {', '.join(att_tech_obj.active_names())}")
+    if att_agent_list:
+        typer.echo(f"  Attacker agents : {', '.join(a.name for a in att_agent_list)}")
     if def_faction_obj:
         typer.echo(f"  Defender faction: {def_faction_obj.name}")
     typer.echo(f"  Defender        : {fleet_summary(defender_units)}")
@@ -544,6 +603,8 @@ def main(
         typer.echo(f"  Defender PDS    : {fleet_summary(def_pds_units)}")
     if def_tech_obj.active_names():
         typer.echo(f"  Defender techs  : {', '.join(def_tech_obj.active_names())}")
+    if def_agent_list:
+        typer.echo(f"  Defender agents : {', '.join(a.name for a in def_agent_list)}")
 
     results = run_simulation(
         combat_type,
@@ -556,6 +617,8 @@ def main(
         def_techs=def_tech_obj,
         att_faction=att_faction_obj,
         def_faction=def_faction_obj,
+        att_agents=att_agent_list,
+        def_agents=def_agent_list,
         n_simulations=simulations,
     )
 
